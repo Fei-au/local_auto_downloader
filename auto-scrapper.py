@@ -553,6 +553,8 @@ def main():
             'lpn_code': 'string',
             'upc_ean_code': 'string',
             'fnsku_code': 'string',
+            'detail': 'string',
+            'details': 'string',
         }
     )
     tz = pytz.timezone('utc')
@@ -566,6 +568,7 @@ def main():
     if 'details' not in df.columns:
         df['details'] = pd.NA
         df.to_csv(CSV_FILE_PATH, index=False)
+    df['details'] = df['details'].astype('string')
 
     recent_b_codes = fetch_last_week_b_codes()
 
