@@ -1,5 +1,5 @@
 CSV_FILE_PATH = "C:\\Users\\KY\\Desktop\\2025-09-12-1.csv"
-GOOGLE_APPLICATION_CREDENTIALS = "C:\\Users\\KY\\Desktop\\c\\glass-gasket-415918-b30506c4d63f.json"
+GOOGLE_APPLICATION_CREDENTIALS = "C:\\Users\\KY\\Desktop\\local_auto_downloader\\glass-gasket-415918-b30506c4d63f.json"
 TOTAL_SECONDS_PER_ITEM = 30
 
 from datetime import datetime
@@ -17,6 +17,8 @@ from tempfile import NamedTemporaryFile
 from selenium import webdriver
 from selenium.webdriver import ActionChains
 from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.service import Service as ChromeService
+from selenium.webdriver.edge.service import Service as EdgeService
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
@@ -45,15 +47,195 @@ SQL_USER="root"
 SQL_PASSWORD="root"
 SQL_DATABASE_NAME="ruito"
 
-USE_MS = True
+USE_MS = False
 IS_DeVELOPMENT = True
-WEBDRIVER_PATH = ""
-MS_WEBDRIVER_PATH = ""
 BUCKET = 'rt-staff-files'
 
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = GOOGLE_APPLICATION_CREDENTIALS
 
 connector = Connector()
+driver = None
+
+
+def create_driver():
+
+    if USE_MS:
+        options = webdriver.EdgeOptions()
+        options.add_argument('--no-sandbox')
+        options.add_argument("--disable-dev-shm-usage")
+    else:
+        options = webdriver.ChromeOptions()
+
+    if IS_DeVELOPMENT:
+        options.add_argument('--disable-gpu')  # applicable to windows os only
+    else:
+        options.add_argument('--headless=new') # Use '--headless=new' for modern versions
+
+    if not USE_MS:
+        driver = webdriver.Chrome(service=ChromeService(), options=options)
+    else:
+        driver = webdriver.Edge(service=EdgeService(), options=options)
+    return driver
+
+
+def ensure_driver():
+    global driver
+    if driver is None:
+        driver = create_driver()
+    return driver
+
+
+def get_image_urls(driver, url):
+    # driver.implicitly_wait(10)
+    if url[25:-1].isnumeric():
+        image_element = driver.find_element(By.ID, 'landingImage')
+        return [image_element.get_attribute('src')]
+    else:
+
+        try:
+            # in case there is a verify code, click the change new code, it will go to the product page.
+            try:
+                diff_img_button = driver.find_element(By.XPATH, "//a[@onclick='window.location.reload()']")
+                diff_img_button.click()
+                wait = WebDriverWait(driver, 60)
+                wait.until(EC.presence_of_all_elements_located(
+                    (By.CSS_SELECTOR, 'li.a-spacing-small.item.imageThumbnail.a-declarative')))
+            except:
+                print('do nothing')
+            # Find the thumbnail elements with class name "a-spacing-small item imageThumbnail a-declarative"
+            thumbnail_elements = driver.find_elements(By.CSS_SELECTOR,
+                                                      'li.a-spacing-small.item.imageThumbnail.a-declarative')
+
+            # Interact with each thumbnail element and click the nested <span> with class name
+            # "a-button a-button-thumbnail a-button-toggle"
+            for i, thumbnail in enumerate(thumbnail_elements[:3], start=1):
+                span_element = thumbnail.find_element(By.CSS_SELECTOR,
+                                                      'span.a-button.a-button-thumbnail.a-button-toggle')
+                ActionChains(driver).move_to_element(span_element).click().perform()
+            # logger.info('click each next image')
+
+            # Use explicit wait to wait for the <li> elements with class prefix "image item item" to be present
+            li_elements = []
+            try:
+                wait = WebDriverWait(driver, 10)
+                li_elements = wait.until(
+                    EC.presence_of_all_elements_located((By.CSS_SELECTOR, 'li[class^="image item item"]')))
+            except TimeoutException:
+                print("The elements did not load within the timeout period.")
+            image_urls = []
+
+            # Loop through the <li> elements and extract the image URLs
+            for i, li_element in enumerate(li_elements[:3], start=1):
+                image_element = li_element.find_element(By.TAG_NAME, 'img')
+                image_url = image_element.get_attribute('src')
+                image_urls.append(image_url)
+            # Output the image URLs
+            for idx, iURL in enumerate(image_urls, start=1):
+                print(f"Image {idx}: {iURL}")
+            return image_urls
+        except Exception as e:
+            logger.error(f'download img error: {e}')
+
+
+
+# bypass verify code and wait to find target element
+def bypass_verify_code(driver, selector, value):
+    try:
+        # Click "Continue shopping" on Amazon captcha/checkpoint page when present.
+        continue_button_selectors = [
+            (By.CSS_SELECTOR, "form[action*='validateCaptcha'] button.a-button-text[type='submit']"),
+            (By.XPATH, "//form[contains(@action,'validateCaptcha')]//button[normalize-space()='Continue shopping']"),
+            (By.XPATH, "//button[@type='submit' and contains(@alt,'Continue shopping')]"),
+        ]
+
+        clicked = False
+        for by, locator in continue_button_selectors:
+            elements = driver.find_elements(by, locator)
+            for element in elements:
+                if element.is_displayed() and element.is_enabled():
+                    element.click()
+                    clicked = True
+                    break
+            if clicked:
+                break
+    except Exception:
+        # no verify code, just keep going
+        pass
+    
+    try:
+        wait = WebDriverWait(driver, 5)
+        wait.until(EC.presence_of_all_elements_located((selector, value)))
+    except TimeoutException:
+        raise TimeoutException(f'element {value} not found')
+
+def get_title(soup):
+    span = soup.find('span', id='productTitle')
+    if span:
+        return span.text.replace('\n', '').strip()
+    meta = soup.find('meta', attrs={'name': 'title'})
+    if meta:
+        return meta['content']
+    meta2 = soup.find('meta', attrs={'name': 'description'})
+    if meta2:
+        return meta2['content']
+    title = soup.find('title')
+    if title:
+        return title.text.replace('\n', '').strip()
+    div = soup.find('titleSection')
+    if div:
+        h1 = div.find('h1', id='title')
+        if h1:
+            span_with_class = h1.find('span', class_='product-title-word-break')
+            if span_with_class:
+                return span_with_class.text.replace('\n', '').strip()
+    return None
+
+
+def get_description(soup):
+    div = soup.find('div', id='productDescription')
+    if div:
+        p = div.find('p')
+        if p:
+            spans = p.find_all('span')
+            if spans:
+                text = ''
+                for s in spans:
+                    text += s.text + ' '
+                return text
+    return None
+
+
+def get_images_by_script(soup):
+    scripts = soup.find_all('script')
+    reg = r'"hiRes":"(https?://[^"]+\.jpg)"'
+    result = []
+    for script in scripts:
+        if 'colorImages' in script.text:
+            hi_res_urls = re.findall(reg, script.text)
+            result += hi_res_urls
+            if len(result) >= 3:
+                break
+    return result[0: 3]
+
+def get_clses(soup):
+    a_tags = soup.find_all('a', class_='a-link-normal a-color-tertiary')
+    text = None
+    if a_tags:
+        # if len(a_tags) < 3:
+        # for a in a_tags[2:3]:
+        if len(a_tags) < 3:
+            a = a_tags[0]
+        else:
+            a = a_tags[2]
+            text = a.text.replace('\n', '').strip()
+    return text
+
+
+# def get_size(soup):
+#     span_with_id = soup.find('span',id='native_dropdown_selected_size_name')
+#     if span_with_id:
+#         return  span_with_id.text
+#     return  None
 
 def get_mysql_conn():
     conn = connector.connect(
@@ -161,184 +343,6 @@ def normalize_identifier(value):
 
     return text_value
 
-def create_driver():
-
-    if USE_MS:
-        options = webdriver.EdgeOptions()
-        # options.add_argument(f'--user-data-dir={temp_user_data_dir}')  # avoids conflict
-        # options.add_argument(f'--user-data-dir={temp_user_data_dir}')
-        # It's good practice to add no-sandbox and disable-dev-shm-usage for Linux/headless
-        options.add_argument('--no-sandbox')
-        options.add_argument("--disable-dev-shm-usage")
-    else:
-        options = webdriver.ChromeOptions()
-
-    if IS_DeVELOPMENT:
-        # local setting
-        options.add_argument('--disable-gpu')  # applicable to windows os only
-    else:
-        # options.add_argument('--no-sandbox')  # Bypass OS security model (necessary on some platforms, e.g., Linux)
-        options.add_argument('--headless=new') # Use '--headless=new' for modern versions
-    # options.add_argument("--disable-dev-shm-usage")  # Overcome limited resource problems
-
-
-    # Set chrome WebDriver options
-
-    # options.add_argument('disable-infobars')
-    # options.add_argument('--disable-extensions')export DJANGO_ENV=production
-
-    # options.add_argument('--remote-debugging-port=9222')
-
-    if not USE_MS:
-        # Initialize chrome WebDriver with options
-        service = webdriver.ChromeService(executable_path=WEBDRIVER_PATH)
-        driver = webdriver.Chrome(service=service, options=options)
-    else:
-        service = webdriver.EdgeService(executable_path=MS_WEBDRIVER_PATH)
-        # logger.info('here at ms driver')
-        driver = webdriver.Edge(service=service, options=options)
-    return driver
-
-
-def get_image_urls(driver, url):
-    # driver.implicitly_wait(10)
-    if url[25:-1].isnumeric():
-        image_element = driver.find_element(By.ID, 'landingImage')
-        return [image_element.get_attribute('src')]
-    else:
-
-        try:
-            # in case there is a verify code, click the change new code, it will go to the product page.
-            try:
-                diff_img_button = driver.find_element(By.XPATH, "//a[@onclick='window.location.reload()']")
-                diff_img_button.click()
-                wait = WebDriverWait(driver, 60)
-                wait.until(EC.presence_of_all_elements_located(
-                    (By.CSS_SELECTOR, 'li.a-spacing-small.item.imageThumbnail.a-declarative')))
-            except:
-                print('do nothing')
-            # Find the thumbnail elements with class name "a-spacing-small item imageThumbnail a-declarative"
-            thumbnail_elements = driver.find_elements(By.CSS_SELECTOR,
-                                                      'li.a-spacing-small.item.imageThumbnail.a-declarative')
-
-            # Interact with each thumbnail element and click the nested <span> with class name
-            # "a-button a-button-thumbnail a-button-toggle"
-            for i, thumbnail in enumerate(thumbnail_elements[:3], start=1):
-                span_element = thumbnail.find_element(By.CSS_SELECTOR,
-                                                      'span.a-button.a-button-thumbnail.a-button-toggle')
-                ActionChains(driver).move_to_element(span_element).click().perform()
-            # logger.info('click each next image')
-
-            # Use explicit wait to wait for the <li> elements with class prefix "image item item" to be present
-            li_elements = []
-            try:
-                wait = WebDriverWait(driver, 10)
-                li_elements = wait.until(
-                    EC.presence_of_all_elements_located((By.CSS_SELECTOR, 'li[class^="image item item"]')))
-            except TimeoutException:
-                print("The elements did not load within the timeout period.")
-            image_urls = []
-
-            # Loop through the <li> elements and extract the image URLs
-            for i, li_element in enumerate(li_elements[:3], start=1):
-                image_element = li_element.find_element(By.TAG_NAME, 'img')
-                image_url = image_element.get_attribute('src')
-                image_urls.append(image_url)
-            # Output the image URLs
-            for idx, iURL in enumerate(image_urls, start=1):
-                print(f"Image {idx}: {iURL}")
-            return image_urls
-        except Exception as e:
-            logger.error(f'download img error: {e}')
-
-
-
-# bypass verify code and wait to find target element
-def bypass_verify_code(driver, selector, value):
-    try:
-        # if there is a verify code when opening amazon, click another image to bypass it.
-        diff_img_button = driver.find_element(By.XPATH, "//a[@onclick='window.location.reload()']")
-        diff_img_button.click()
-    except:
-        # no verify code, just keep going
-        print('do nothing for element', value)
-
-    try:
-        wait = WebDriverWait(driver, 5)
-        wait.until(EC.presence_of_all_elements_located((selector, value)))
-    except TimeoutException:
-        print('here not found element', value)
-        raise TimeoutException('element {value} not found')
-
-def get_title(soup):
-    span = soup.find('span', id='productTitle')
-    if span:
-        return span.text.replace('\n', '').strip()
-    meta = soup.find('meta', attrs={'name': 'title'})
-    if meta:
-        return meta['content']
-    meta2 = soup.find('meta', attrs={'name': 'description'})
-    if meta2:
-        return meta2['content']
-    title = soup.find('title')
-    if title:
-        return title.text.replace('\n', '').strip()
-    div = soup.find('titleSection')
-    if div:
-        h1 = div.find('h1', id='title')
-        if h1:
-            span_with_class = h1.find('span', class_='product-title-word-break')
-            if span_with_class:
-                return span_with_class.text.replace('\n', '').strip()
-    return None
-
-
-def get_description(soup):
-    div = soup.find('div', id='productDescription')
-    if div:
-        p = div.find('p')
-        if p:
-            spans = p.find_all('span')
-            if spans:
-                text = ''
-                for s in spans:
-                    text += s.text + ' '
-                return text
-    return None
-
-
-def get_images_by_script(soup):
-    scripts = soup.find_all('script')
-    reg = r'"hiRes":"(https?://[^"]+\.jpg)"'
-    result = []
-    for script in scripts:
-        if 'colorImages' in script.text:
-            hi_res_urls = re.findall(reg, script.text)
-            result += hi_res_urls
-            if len(result) >= 3:
-                break
-    return result[0: 3]
-
-def get_clses(soup):
-    a_tags = soup.find_all('a', class_='a-link-normal a-color-tertiary')
-    text = None
-    if a_tags:
-        # if len(a_tags) < 3:
-        # for a in a_tags[2:3]:
-        if len(a_tags) < 3:
-            a = a_tags[0]
-        else:
-            a = a_tags[2]
-            text = a.text.replace('\n', '').strip()
-    return text
-
-
-# def get_size(soup):
-#     span_with_id = soup.find('span',id='native_dropdown_selected_size_name')
-#     if span_with_id:
-#         return  span_with_id.text
-#     return  None
-
 def get_color(soup):
     div_with_id = soup.find('div', id='variation_color_name')
     if div_with_id:
@@ -355,10 +359,13 @@ def get_price(soup):
         try:
             s = span.find('span', class_='a-offscreen')
             if s:
-                if s.startswith('$'):
-                    t = s.text[1:].strip()
-                elif s.startswith('CAD'):
-                    t = s.split('-')[0].text[3:].strip()
+                raw = s.text.strip()
+                if raw.startswith('$'):
+                    t = raw[1:].strip()
+                elif raw.startswith('CAD'):
+                    t = raw.replace('CAD', '').split('-')[-1].strip()
+                else:
+                    t = raw
                 if t:
                     return string_to_float_decimal(t)
         except Exception as e:
@@ -381,9 +388,10 @@ def get_price(soup):
             if span:
                 return string_to_float_decimal(span.text[1:])
     parent = soup.find('div', id='desktop_buybox')
-    span = parent.find('span', class_='a-price-whole')
-    if span:
-        return string_to_float_decimal(span.text)
+    if parent:
+        span = parent.find('span', class_='a-price-whole')
+        if span:
+            return string_to_float_decimal(span.text)
     # span = soup.find('span', id='tp-tool-tip-subtotal-price-value')
     # print('span3', span3)
     # if span3:
@@ -427,11 +435,13 @@ class TestResponse:
 
 
 def download_image(image_url):
-    extension = get_extension_from_url(image_url)
-    response = requests.get(image_url)
+    if not image_url:
+        return None
+
+    extension = get_extension_from_url(image_url) or '.jpg'
+    response = requests.get(image_url, timeout=20)
     if response.status_code == 200:
         with NamedTemporaryFile() as img_temp:
-            img_temp = NamedTemporaryFile()
             img_temp.write(response.content)
             img_temp.flush()
             img_temp.seek(0)
@@ -441,9 +451,19 @@ def download_image(image_url):
             file_path = f'temp_image/{date_prefix}/{uuid.uuid4()}{extension}'
             upload_to_gcs(img_temp, file_path)
             return image_url, file_path
+    return None
 
 def scrap(code):
-    
+    global driver
+
+    text = None
+    us_url = 'https://amazon.ca/dp/' + code + "/"
+
+    driver = ensure_driver()
+    driver.get(us_url)
+    bypass_verify_code(driver, By.ID, 'twotabsearchtextbox')
+    text = driver.page_source
+    '''
     user_agent_list = ['Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36',
                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.0.0.0 Safari/537.36',
                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36']
@@ -468,16 +488,13 @@ def scrap(code):
         "accept-language": choice(accept_language_list),
         "user-agent": choice(user_agent_list),
     }
-
-    text = None
-    us_url = 'https://amazon.com/dp/' + code + "/"
-
+    
     response = requests.get(us_url, headers=custom_headers, timeout=30)
     if response.status_code == 200:
         text = response.content.decode('utf-8')
         if "Sorry! We couldn\'t find that page" in text:
             pass
-        elif "To discuss automated access to Amazon data please contact" in text:
+        elif "To discuss automated access to Amazon data" in text:
             raise Exception('Request has been blocked by Amazon')
     elif response.status_code == 404:
         pass
@@ -504,18 +521,31 @@ def scrap(code):
                     'status': 0,
                     'message': 'Item not found, it has been removed from Amazon'
                 }
-        
+    '''
     try:
         soup = BeautifulSoup(text, 'html.parser')
+        page_text = soup.get_text(" ", strip=True)
+        if "Sorry! We couldn't find that page" in page_text:
+            return {
+                'status': 0,
+                'message': 'Item not found, it has been removed from Amazon'
+            }
+
+        # urls = get_image_urls(driver, us_url) or []
+        # if not urls:
         urls = get_images_by_script(soup)
+
         images = []
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            futures = executor.map(download_image, urls)
-            for image_url, img_file_path in futures:
-                try:
-                    images.append((image_url, img_file_path))
-                except Exception as e:
-                    logger.error(f'Error downloading image: {e}')
+        if urls:
+            with ThreadPoolExecutor(max_workers=min(3, len(urls))) as executor:
+                futures = executor.map(download_image, urls)
+                for result in futures:
+                    try:
+                        if result:
+                            image_url, img_file_path = result
+                            images.append((image_url, img_file_path))
+                    except Exception as e:
+                        logger.error(f'Error downloading image: {e}')
         b_code = code
         title = get_title(soup)
         cls = get_clses(soup)
@@ -534,6 +564,10 @@ def scrap(code):
         }
     except Exception as e:
         logger.error(f'scrap html error: {e}')
+        return {
+            'status': -1,
+            'message': str(e),
+        }
         
         
 '''
@@ -546,6 +580,7 @@ Status code:
 '''
 
 def main():
+    global driver
     df = pd.read_csv(
         CSV_FILE_PATH,
         dtype={
@@ -577,58 +612,65 @@ def main():
     failure_count = 0
     skipped_count = 0
     
-    for index, row in df.iterrows():
-        row_start_time = monotonic()
-        if pd.notna(row['status']) and row['status'] >= 0:
-            continue
-        current_b_code = str(row['b_code']).strip() if pd.notna(row['b_code']) and str(row['b_code']).startswith('B0') else ''
-        if current_b_code in recent_b_codes:
-            df.at[index, 'status'] = 2
-            df.at[index, 'details'] = ''
-            df.to_csv(CSV_FILE_PATH, index=False)
-            skipped_count += 1
-            continue
-        if current_b_code:
-            try:
-                result = scrap(code=current_b_code)
-                if result['status'] == 1:
-                    data = result['data']
-                    data['image1'] = data['images'][0][1] if len(data['images']) > 0 else None
-                    data['image2'] = data['images'][1][1] if len(data['images']) > 1 else None
-                    data['image3'] = data['images'][2][1] if len(data['images']) > 2 else None
-                    data['image1_url'] = data['images'][0][0] if len(data['images']) > 0 else None
-                    data['image2_url'] = data['images'][1][0] if len(data['images']) > 1 else None
-                    data['image3_url'] = data['images'][2][0] if len(data['images']) > 2 else None
-                    data['add_date'] = add_date
-                    data['scrap_date'] = datetime.now()
-                    data['lpn_code'] = normalize_identifier(row['lpn_code'])
-                    data['upc_ean_code'] = normalize_identifier(row['upc_ean_code'])
-                    data['fnsku_code'] = normalize_identifier(row['fnsku_code'])
-                    insert_temp_item(result['data'])
-                    success_count += 1
-                else:
-                    not_found_count += 1
-                df.at[index, 'status'] = result['status']
+    try:
+        ensure_driver()
+
+        for index, row in df.iterrows():
+            row_start_time = monotonic()
+            if pd.notna(row['status']) and row['status'] >= 0:
+                continue
+            current_b_code = str(row['b_code']).strip() if pd.notna(row['b_code']) and str(row['b_code']).startswith('B0') else ''
+            if current_b_code in recent_b_codes:
+                df.at[index, 'status'] = 2
                 df.at[index, 'details'] = ''
-                logger.info(f'{current_b_code} done: {result["status"]}')
-            except Exception as e:
-                logger.error(f'scrap error {row["b_code"]}: {e}')
-                df.at[index, 'status'] = -1
-                df.at[index, 'details'] = str(e)
-                failure_count += 1
-            
-            finally:
                 df.to_csv(CSV_FILE_PATH, index=False)
-                recent_b_codes.add(current_b_code)
-                elapsed = monotonic() - row_start_time
-                remaining = TOTAL_SECONDS_PER_ITEM - elapsed
-                if remaining > 0:
-                    sleep(remaining)
-        else:
-            df.at[index, 'status'] = 3
-            df.at[index, 'details'] = ''
-            df.to_csv(CSV_FILE_PATH, index=False)
-            skipped_count += 1
+                skipped_count += 1
+                continue
+            if current_b_code:
+                try:
+                    result = scrap(code=current_b_code)
+                    if result['status'] == 1:
+                        data = result['data']
+                        data['image1'] = data['images'][0][1] if len(data['images']) > 0 else None
+                        data['image2'] = data['images'][1][1] if len(data['images']) > 1 else None
+                        data['image3'] = data['images'][2][1] if len(data['images']) > 2 else None
+                        data['image1_url'] = data['images'][0][0] if len(data['images']) > 0 else None
+                        data['image2_url'] = data['images'][1][0] if len(data['images']) > 1 else None
+                        data['image3_url'] = data['images'][2][0] if len(data['images']) > 2 else None
+                        data['add_date'] = add_date
+                        data['scrap_date'] = datetime.now()
+                        data['lpn_code'] = normalize_identifier(row['lpn_code'])
+                        data['upc_ean_code'] = normalize_identifier(row['upc_ean_code'])
+                        data['fnsku_code'] = normalize_identifier(row['fnsku_code'])
+                        insert_temp_item(result['data'])
+                        success_count += 1
+                    else:
+                        not_found_count += 1
+                    df.at[index, 'status'] = result['status']
+                    df.at[index, 'details'] = ''
+                    logger.info(f'{current_b_code} done: {result["status"]}')
+                except Exception as e:
+                    logger.error(f'scrap error {row["b_code"]}: {e}')
+                    df.at[index, 'status'] = -1
+                    df.at[index, 'details'] = str(e)
+                    failure_count += 1
+
+                finally:
+                    df.to_csv(CSV_FILE_PATH, index=False)
+                    recent_b_codes.add(current_b_code)
+                    elapsed = monotonic() - row_start_time
+                    remaining = TOTAL_SECONDS_PER_ITEM - elapsed
+                    if remaining > 0:
+                        sleep(remaining)
+            else:
+                df.at[index, 'status'] = 3
+                df.at[index, 'details'] = ''
+                df.to_csv(CSV_FILE_PATH, index=False)
+                skipped_count += 1
+    finally:
+        if driver is not None:
+            driver.quit()
+            driver = None
 
     logger.info(
         f'Scraping completed. success={success_count}, failed={failure_count}, not_found={not_found_count}, skipped={skipped_count}'
