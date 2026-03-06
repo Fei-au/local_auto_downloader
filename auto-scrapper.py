@@ -667,14 +667,16 @@ def main():
                 df.at[index, 'details'] = ''
                 df.to_csv(CSV_FILE_PATH, index=False)
                 skipped_count += 1
+            
+            if index % 10 == 0:
+                logger.info(
+                    f'Scraping completed. success={success_count}, failed={failure_count}, not_found={not_found_count}, skipped={skipped_count}'
+                )
     finally:
         if driver is not None:
             driver.quit()
             driver = None
 
-    logger.info(
-        f'Scraping completed. success={success_count}, failed={failure_count}, not_found={not_found_count}, skipped={skipped_count}'
-    )
                 
 if __name__ == "__main__":
     main()
