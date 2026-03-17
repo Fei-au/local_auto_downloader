@@ -1,4 +1,4 @@
-CSV_FILE_PATH = "C:\\Users\\KY\\Desktop\\2025-09-12-1.csv"
+CSV_FILE_PATH = "C:\\Users\\KY\\Desktop\\2026-03-13.csv"
 GOOGLE_APPLICATION_CREDENTIALS = "C:\\Users\\KY\\Desktop\\local_auto_downloader\\glass-gasket-415918-b30506c4d63f.json"
 TOTAL_SECONDS_PER_ITEM = 30
 
@@ -457,7 +457,7 @@ def scrap(code):
     global driver
 
     text = None
-    us_url = 'https://amazon.ca/dp/' + code + "/"
+    us_url = 'https://amazon.com/dp/' + code + "/"
 
     driver = ensure_driver()
     driver.get(us_url)
@@ -546,6 +546,8 @@ def scrap(code):
                             images.append((image_url, img_file_path))
                     except Exception as e:
                         logger.error(f'Error downloading image: {e}')
+        if len(images) == 0:
+            images = [(image_url, None) for image_url in urls]
         b_code = code
         title = get_title(soup)
         cls = get_clses(soup)
