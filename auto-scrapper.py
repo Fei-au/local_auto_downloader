@@ -554,7 +554,7 @@ def scrap(code):
                         logger.error(f'Error downloading image: {e}')
         else:
             return {
-                'status': -1,
+                'status': 4,
                 'message': "No images found for this item",
             }
         if len(images) == 0:
@@ -589,6 +589,7 @@ Status code:
 1: success
 2: previous scraped url, skipped
 3: b code value is empty in the csv
+4: image urls not found
 -1: exception error when scrap, need to check log for details
 '''
 
