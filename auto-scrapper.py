@@ -1,6 +1,6 @@
-CSV_FILE_PATH = "C:\\Users\\KY\\Desktop\\2026-03-13.csv"
+CSV_FILE_PATH = "C:\\Users\\KY\\Desktop\\2026-03-24.csv"
 GOOGLE_APPLICATION_CREDENTIALS = "C:\\Users\\KY\\Desktop\\local_auto_downloader\\glass-gasket-415918-b30506c4d63f.json"
-TOTAL_SECONDS_PER_ITEM = 30
+TOTAL_SECONDS_PER_ITEM = 15
 
 from datetime import datetime
 import logging
@@ -461,7 +461,13 @@ def scrap(code):
 
     driver = ensure_driver()
     driver.get(us_url)
-    bypass_verify_code(driver, By.ID, 'twotabsearchtextbox')
+    try:
+        bypass_verify_code(driver, By.ID, 'twotabsearchtextbox')
+    except TimeoutException as e:
+        return {
+            'status': 0,
+            'message': 'Item not found, it has been removed from Amazon'
+        }
     text = driver.page_source
     '''
     user_agent_list = ['Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36',
@@ -546,6 +552,11 @@ def scrap(code):
                             images.append((image_url, img_file_path))
                     except Exception as e:
                         logger.error(f'Error downloading image: {e}')
+        else:
+            return {
+                'status': -1,
+                'message': "No images found for this item",
+            }
         if len(images) == 0:
             images = [(image_url, None) for image_url in urls]
         b_code = code
