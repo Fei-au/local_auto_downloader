@@ -564,7 +564,7 @@ def scrap(code):
         cls = get_clses(soup)
         customize_color = get_color(soup)
         price = get_price(soup)
-        if price is None:
+        if price is not None:
             price *= 1.4
             price = string_to_float_decimal(price)
         return {
