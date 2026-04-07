@@ -1,6 +1,6 @@
-CSV_FILE_PATH = "C:\\Users\\KY\\Desktop\\2026-03-24.csv"
+CSV_FILE_PATH = "C:\\Users\\KY\\Desktop\\2026-04-09.csv"
 GOOGLE_APPLICATION_CREDENTIALS = "C:\\Users\\KY\\Desktop\\local_auto_downloader\\glass-gasket-415918-b30506c4d63f.json"
-TOTAL_SECONDS_PER_ITEM = 15
+TOTAL_SECONDS_PER_ITEM = 20
 
 from datetime import datetime
 import logging
@@ -564,6 +564,9 @@ def scrap(code):
         cls = get_clses(soup)
         customize_color = get_color(soup)
         price = get_price(soup)
+        if price is None:
+            price *= 1.4
+            price = string_to_float_decimal(price)
         return {
             'status': 1,
             'data': {
