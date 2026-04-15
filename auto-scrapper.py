@@ -457,7 +457,7 @@ def scrap(code):
     global driver
 
     text = None
-    us_url = 'https://amazon.com/dp/' + code + "/"
+    us_url = 'https://amazon.ca/dp/' + code + "/"
 
     driver = ensure_driver()
     driver.get(us_url)
