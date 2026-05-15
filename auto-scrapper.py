@@ -1,4 +1,5 @@
-CSV_FILE_PATH = "C:\\Users\\KY\\Desktop\\2026-04-09.csv"
+CSV_FILE_PATH = "C:\\Users\\KY\\Desktop\\2026-05-19.csv"
+IS_US = False
 GOOGLE_APPLICATION_CREDENTIALS = "C:\\Users\\KY\\Desktop\\local_auto_downloader\\glass-gasket-415918-b30506c4d63f.json"
 TOTAL_SECONDS_PER_ITEM = 20
 
@@ -453,14 +454,17 @@ def download_image(image_url):
             return image_url, file_path
     return None
 
-def scrap(code):
+def scrap(code, price):
     global driver
 
     text = None
-    us_url = 'https://amazon.ca/dp/' + code + "/"
+    if IS_US:
+        url = 'https://amazon.com/dp/' + code + "/"
+    else:
+        url = 'https://amazon.ca/dp/' + code + "/"
 
     driver = ensure_driver()
-    driver.get(us_url)
+    driver.get(url)
     try:
         bypass_verify_code(driver, By.ID, 'twotabsearchtextbox')
     except TimeoutException as e:
@@ -563,8 +567,8 @@ def scrap(code):
         title = get_title(soup)
         cls = get_clses(soup)
         customize_color = get_color(soup)
-        price = get_price(soup)
-        if price is not None:
+        # price = get_price(soup)
+        if IS_US and price is not None:
             price *= 1.4
             price = string_to_float_decimal(price)
         return {
@@ -645,7 +649,7 @@ def main():
                 continue
             if current_b_code:
                 try:
-                    result = scrap(code=current_b_code)
+                    result = scrap(code=current_b_code, price=df.at[index, 'msrp_price'])
                     if result['status'] == 1:
                         data = result['data']
                         data['image1'] = data['images'][0][1] if len(data['images']) > 0 else None
